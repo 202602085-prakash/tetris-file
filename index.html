@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tetris</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;justify-content:center;align-items:center;background:linear-gradient(135deg,#111827,#312e81);font-family:Arial,sans-serif;color:#fff}
+.game{display:flex;gap:24px;align-items:flex-start;background:rgba(17,24,39,.92);padding:24px;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+h1{margin:0 0 12px;text-align:center;font-size:28px}
+#board{display:grid;grid-template-columns:repeat(10,30px);grid-template-rows:repeat(20,30px);gap:1px;background:#111827;border:4px solid #4b5563;padding:2px}
+.cell{width:30px;height:30px;background:#1f2937;border-radius:3px}
+.panel{width:180px}
+.card{background:#1f2937;padding:14px;border-radius:12px;margin-bottom:12px}
+.label{font-size:13px;color:#9ca3af}.value{font-size:25px;font-weight:bold;margin-top:4px}
+#next{display:grid;grid-template-columns:repeat(4,22px);grid-template-rows:repeat(4,22px);gap:2px;margin-top:10px}
+.ncell{width:22px;height:22px;background:#111827;border-radius:2px}
+button{width:100%;padding:11px;margin-top:8px;border:0;border-radius:9px;background:#6366f1;color:white;font-weight:bold;cursor:pointer}
+button:hover{background:#818cf8}
+.help{font-size:12px;line-height:1.6;color:#d1d5db}
+@media(max-width:650px){.game{padding:12px;gap:12px}.panel{width:130px}#board{grid-template-columns:repeat(10,24px);grid-template-rows:repeat(20,24px)}.cell{width:24px;height:24px}}
+</style>
+</head>
+<body>
+<div class="game">
+<div>
+<h1>🎮 TETRIS</h1>
+<div id="board"></div>
+</div>
+<div class="panel">
+<div class="card"><div class="label">SCORE</div><div id="score" class="value">0</div></div>
+<div class="card"><div class="label">LINES</div><div id="lines" class="value">0</div></div>
+<div class="card"><div class="label">LEVEL</div><div id="level" class="value">1</div></div>
+<div class="card"><div class="label">NEXT</div><div id="next"></div></div>
+<button id="start">START / RESTART</button>
+<div class="card help"><b>Controls</b><br>← → Move<br>↓ Soft drop<br>↑ Rotate<br>Space Hard drop<br>P Pause</div>
+</div>
+</div>
+<script>
+const W=10,H=20;
+const boardEl=document.getElementById("board");
+const nextEl=document.getElementById("next");
+const scoreEl=document.getElementById("score");
+const linesEl=document.getElementById("lines");
+const levelEl=document.getElementById("level");
+
+const pieces=[
+ {shape:[[1,1,1,1]],color:"#22d3ee"},
+ {shape:[[1,0,0],[1,1,1]],color:"#3b82f6"},
+ {shape:[[0,0,1],[1,1,1]],color:"#f59e0b"},
+ {shape:[[1,1],[1,1]],color:"#facc15"},
+ {shape:[[0,1,1],[1,1,0]],color:"#22c55e"},
+ {shape:[[0,1,0],[1,1,1]],color:"#a855f7"},
+ {shape:[[1,1,0],[0,1,1]],color:"#ef4444"}
+];
+
+let board=[],current=null,next=null,score=0,lines=0,level=1,running=false,paused=false,lastDrop=0,animation;
+
+function emptyBoard(){return Array.from({length:H},()=>Array(W).fill(null))}
+function clone(a){return a.map(r=>r.slice())}
+function randomPiece(){
+ const p=pieces[Math.floor(Math.random()*pieces.length)];
+ return {shape:clone(p.shape),color:p.color,x:Math.floor((W-p.shape[0].length)/2),y:0};
+}
+function rotate(shape){
+ return shape[0].map((_,i)=>shape.map(row=>row[i]).reverse());
+}
+function collision(p,shape=p.shape,x=p.x,y=p.y){
+ for(let r=0;r<shape.length;r++)for(let c=0;c<shape[r].length;c++){
+  if(!shape[r][c])continue;
+  const nx=x+c,ny=y+r;
+  if(nx<0||nx>=W||ny>=H)return true;
+  if(ny>=0&&board[ny][nx])return true;
+ }
+ return false;
+}
+function merge(){
+ current.shape.forEach((row,r)=>row.forEach((v,c)=>{
+  if(v&&current.y+r>=0)board[current.y+r][current.x+c]=current.color;
+ }));
+}
+function clearLines(){
+ let cleared=0;
+ board=board.filter(row=>{if(row.every(Boolean)){cleared++;return false}return true});
+ while(board.length<H)board.unshift(Array(W).fill(null));
+ if(cleared){
+  lines+=cleared;
+  score += [0,100,300,500,800][cleared]*level;
+  level=Math.floor(lines/10)+1;
+ }
+ updateStats();
+}
+function spawn(){
+ current=next||randomPiece();
+ next=randomPiece();
+ if(collision(current)){running=false;alert("Game Over! Score: "+score);return}
+ drawNext();
+}
+function lock(){
+ merge();clearLines();spawn();
+}
+function move(dx){
+ if(!running||paused)return;
+ if(!collision(current,current.shape,current.x+dx,current.y))current.x+=dx;
+ draw();
+}
+function drop(){
+ if(!running||paused)return;
+ if(!collision(current,current.shape,current.x,current.y+1))current.y++;
+ else lock();
+ draw();
+}
+function hardDrop(){
+ if(!running||paused)return;
+ while(!collision(current,current.shape,current.x,current.y+1))current.y++;
+ lock();draw();
+}
+function turn(){
+ if(!running||paused)return;
+ const rotated=rotate(current.shape);
+ const kicks=[0,-1,1,-2,2];
+ for(const k of kicks){
+  if(!collision(current,rotated,current.x+k,current.y)){
+   current.shape=rotated;current.x+=k;break;
+  }
+ }
+ draw();
+}
+function draw(){
+ boardEl.innerHTML="";
+ const temp=clone(board);
+ if(current)current.shape.forEach((row,r)=>row.forEach((v,c)=>{
+  if(v&&current.y+r>=0&&current.y+r<H&&current.x+c>=0&&current.x+c<W)
+   temp[current.y+r][current.x+c]=current.color;
+ }));
+ temp.forEach(row=>row.forEach(color=>{
+  const cell=document.createElement("div");cell.className="cell";
+  if(color)cell.style.background=color;
+  boardEl.appendChild(cell);
+ }));
+}
+function drawNext(){
+ nextEl.innerHTML="";
+ const s=next.shape;
+ for(let r=0;r<4;r++)for(let c=0;c<4;c++){
+  const cell=document.createElement("div");cell.className="ncell";
+  if(s[r]&&s[r][c])cell.style.background=next.color;
+  nextEl.appendChild(cell);
+ }
+}
+function updateStats(){
+ scoreEl.textContent=score;linesEl.textContent=lines;levelEl.textContent=level;
+}
+function gameLoop(time=0){
+ if(running&&!paused&&time-lastDrop>Math.max(100,700-(level-1)*60)){drop();lastDrop=time}
+ animation=requestAnimationFrame(gameLoop);
+}
+function startGame(){
+ board=emptyBoard();score=0;lines=0;level=1;running=true;paused=false;next=randomPiece();spawn();updateStats();draw();
+}
+document.getElementById("start").onclick=startGame;
+document.addEventListener("keydown",e=>{
+ if(["ArrowLeft","ArrowRight","ArrowDown","ArrowUp"," "].includes(e.key))e.preventDefault();
+ if(e.key==="ArrowLeft")move(-1);
+ if(e.key==="ArrowRight")move(1);
+ if(e.key==="ArrowDown")drop();
+ if(e.key==="ArrowUp")turn();
+ if(e.key===" ")hardDrop();
+ if(e.key.toLowerCase()==="p"&&running){paused=!paused}
+});
+startGame();cancelAnimationFrame(animation);animation=requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
